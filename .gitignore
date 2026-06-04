@@ -10,8 +10,9 @@ cc-windows.exe
 # Estado em runtime
 /var/lib/cc/
 
-# AGENTS.md (instrução interna, não vai pro repo público)
+# Documentação interna (não vai pro repo público)
 AGENTS.md
+ROADMAP.md
 
 # Editores e sistema
 .DS_Store
