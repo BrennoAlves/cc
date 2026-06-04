@@ -10,6 +10,9 @@ cc-windows.exe
 # Estado em runtime
 /var/lib/cc/
 
+# Pasta temporária do air (hot reload)
+tmp/
+
 # Documentação interna (não vai pro repo público)
 AGENTS.md
 ROADMAP.md

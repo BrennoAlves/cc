@@ -1,0 +1,22 @@
+# config.example.yaml
+# Copiar para config.yaml e preencher com os valores reais.
+# NUNCA commitar o config.yaml — ele contém credenciais.
+
+telegram:
+  token: ""       # token do bot (obtido via @BotFather)
+  chat_id: ""     # id do chat ou canal de destino padrão
+
+# Token para autenticar chamadas à API /notify
+# Gerar com: openssl rand -hex 32
+notify_token: ""
+
+# Serviços monitorados
+services:
+  - name: meu-app
+    health_url: http://127.0.0.1:8000/health
+    chat_id: ""   # opcional: sobrescreve o chat_id global para este serviço
+
+# Configurações do servidor
+server:
+  check_interval: 60   # segundos entre healthchecks
+  api_port: 8765       # porta da API /notify (escuta apenas em localhost)

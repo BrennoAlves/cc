@@ -1,0 +1,20 @@
+# Copiar para /etc/systemd/system/cc.service
+# Habilitar: sudo systemctl enable --now cc
+
+[Unit]
+Description=cc — monitoramento e notificações
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=<usuario>
+ExecStart=/usr/local/bin/cc -config /etc/cc/config.yaml
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cc
+
+[Install]
+WantedBy=multi-user.target
