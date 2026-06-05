@@ -17,6 +17,11 @@ services:
     chat_id: ""   # opcional: sobrescreve o chat_id global para este serviço
 
 # Configurações do servidor
+# Monitoramento GCP free tier (opcional — remover seção se não usar GCP)
+gcp:
+  projeto: ""           # id do projeto GCP
+  limite_egress_mb: 1024  # limite mensal de egress em MB (padrão: 1024 = 1 GB free tier)
+
 server:
   check_interval: 60      # segundos entre healthchecks
   api_port: 8765          # porta da API /notify (escuta apenas em localhost)

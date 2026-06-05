@@ -24,13 +24,30 @@ type EstadoServico struct {
 }
 
 type EstadoServidor struct {
-	UltimoAlertaDisco   string `json:"ultimo_alerta_disco,omitempty"`
-	UltimoAlertaMemoria string `json:"ultimo_alerta_memoria,omitempty"`
+	NivelAlertaDisco   int `json:"nivel_alerta_disco"`
+	NivelAlertaMemoria int `json:"nivel_alerta_memoria"`
+	NivelAlertaCPU     int `json:"nivel_alerta_cpu"`
+}
+
+type EstadoGCP struct {
+	NivelAlertaEgress int `json:"nivel_alerta_egress"`
 }
 
 type Estado struct {
 	Services map[string]EstadoServico `json:"services"`
 	Servidor EstadoServidor           `json:"servidor"`
+	GCP      EstadoGCP                `json:"gcp"`
+}
+
+// nivelAlerta retorna 0 (ok), 70 (aviso) ou 90 (urgente) para um percentual.
+func nivelAlerta(pct float64) int {
+	if pct >= 90 {
+		return 90
+	}
+	if pct >= 70 {
+		return 70
+	}
+	return 0
 }
 
 type acaoAlerta int

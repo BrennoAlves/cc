@@ -6,22 +6,20 @@ import (
 	"log"
 	"time"
 
+	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/disk"
 	"github.com/shirou/gopsutil/v4/host"
 	"github.com/shirou/gopsutil/v4/mem"
 )
 
 const (
-	limiteDiscoPadrao   = 85
-	limiteMemoriaPadrao = 90
-	intervaloServidor   = 60
+	intervaloServidor = 60
 )
 
-// fstypeIgnorado filtra sistemas de arquivos virtuais e internos do SO.
 var fstypeIgnorado = map[string]bool{
 	"devfs": true, "autofs": true, "nullfs": true,
 	"tmpfs": true, "devtmpfs": true, "sysfs": true,
-	"proc": true, "cgroup": true, "overlay": false,
+	"proc": true, "cgroup": true,
 }
 
 type InfoDisco struct {
@@ -50,18 +48,14 @@ func lerDisco() ([]InfoDisco, error) {
 		if fstypeIgnorado[p.Fstype] {
 			continue
 		}
-
 		uso, err := disk.Usage(p.Mountpoint)
 		if err != nil || uso.Total < 500*1024*1024 {
 			continue
 		}
-
-		// Evita duplicatas — macOS expõe o mesmo disco em múltiplos mountpoints
 		if vistos[uso.Total] {
 			continue
 		}
 		vistos[uso.Total] = true
-
 		resultado = append(resultado, InfoDisco{
 			Particao: p.Mountpoint,
 			Usado:    uso.Used,
@@ -78,12 +72,15 @@ func lerMemoria() (InfoMemoria, error) {
 	if err != nil {
 		return InfoMemoria{}, fmt.Errorf("lendo memória: %w", err)
 	}
+	return InfoMemoria{Usado: v.Used, Total: v.Total, Percent: v.UsedPercent}, nil
+}
 
-	return InfoMemoria{
-		Usado:   v.Used,
-		Total:   v.Total,
-		Percent: v.UsedPercent,
-	}, nil
+func lerCPU() (float64, error) {
+	pcts, err := cpu.Percent(3*time.Second, false)
+	if err != nil || len(pcts) == 0 {
+		return 0, fmt.Errorf("lendo CPU: %w", err)
+	}
+	return pcts[0], nil
 }
 
 func lerUptime() (time.Duration, error) {
@@ -107,36 +104,29 @@ func fmtBytes(b uint64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
-func msgDiscoCritico(d InfoDisco) string {
-	return fmt.Sprintf(
-		"O disco do servidor está em %.0f%% — só %s sobrando. Vale limpar alguma coisa.",
-		d.Percent, fmtBytes(d.Total-d.Usado),
-	)
+func msgDiscoCritico(d InfoDisco, nivel int) string {
+	sobra := fmtBytes(d.Total - d.Usado)
+	if nivel == 90 {
+		return fmt.Sprintf("O disco em %s está crítico — %.0f%% em uso, só %s sobrando. Precisa de atenção agora.", d.Particao, d.Percent, sobra)
+	}
+	return fmt.Sprintf("O disco em %s está em %.0f%% — %s sobrando. Vale dar uma olhada.", d.Particao, d.Percent, sobra)
 }
 
-func msgMemoriaCritica(m InfoMemoria) string {
-	return fmt.Sprintf(
-		"A memória do servidor está em %.0f%%. Não é crítico ainda, mas tá pesado.",
-		m.Percent,
-	)
+func msgMemoriaCritica(m InfoMemoria, nivel int) string {
+	if nivel == 90 {
+		return fmt.Sprintf("A memória está crítica — %.0f%% em uso (%s de %s). Isso pode causar problema.", m.Percent, fmtBytes(m.Usado), fmtBytes(m.Total))
+	}
+	return fmt.Sprintf("A memória está em %.0f%% — %s de %s em uso. Não é urgente, mas tá pesado.", m.Percent, fmtBytes(m.Usado), fmtBytes(m.Total))
+}
+
+func msgCPUCritica(pct float64, nivel int) string {
+	if nivel == 90 {
+		return fmt.Sprintf("A CPU está em %.0f%%. Alguma coisa está consumindo muito — vale investigar.", pct)
+	}
+	return fmt.Sprintf("A CPU está em %.0f%%. Ficando pesado, mas ainda ok.", pct)
 }
 
 func loopServidor(cfg Config, ctx context.Context) {
-	limDisco := cfg.Server.LimiteDiscoPct
-	if limDisco == 0 {
-		limDisco = limiteDiscoPadrao
-	}
-
-	limMem := cfg.Server.LimiteMemoriaPct
-	if limMem == 0 {
-		limMem = limiteMemoriaPadrao
-	}
-
-	cooldown := time.Duration(cfg.Server.AlertCooldownMin) * time.Minute
-	if cooldown == 0 {
-		cooldown = time.Duration(cooldownPadrao) * time.Minute
-	}
-
 	ticker := time.NewTicker(intervaloServidor * time.Second)
 	defer ticker.Stop()
 
@@ -148,29 +138,62 @@ func loopServidor(cfg Config, ctx context.Context) {
 			return
 		case <-ticker.C:
 			estado := carregarEstado(arquivoEstado)
+			alterou := false
 
+			// Disco
 			discos, err := lerDisco()
 			if err != nil {
 				log.Printf("erro ao ler disco: %v", err)
 			} else {
 				for _, d := range discos {
-					if d.Percent >= float64(limDisco) && deveAlertar(estado.Servidor.UltimoAlertaDisco, int(cooldown.Minutes())) {
-						enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msgDiscoCritico(d))
-						estado.Servidor.UltimoAlertaDisco = time.Now().UTC().Format(time.RFC3339)
+					nivel := nivelAlerta(d.Percent)
+					if nivel > estado.Servidor.NivelAlertaDisco {
+						enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msgDiscoCritico(d, nivel))
+						estado.Servidor.NivelAlertaDisco = nivel
+						alterou = true
+					} else if nivel < estado.Servidor.NivelAlertaDisco {
+						estado.Servidor.NivelAlertaDisco = nivel
+						alterou = true
 					}
 				}
 			}
 
-			mem, err := lerMemoria()
+			// Memória
+			memoria, err := lerMemoria()
 			if err != nil {
 				log.Printf("erro ao ler memória: %v", err)
-			} else if mem.Percent >= float64(limMem) && deveAlertar(estado.Servidor.UltimoAlertaMemoria, int(cooldown.Minutes())) {
-				enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msgMemoriaCritica(mem))
-				estado.Servidor.UltimoAlertaMemoria = time.Now().UTC().Format(time.RFC3339)
+			} else {
+				nivel := nivelAlerta(memoria.Percent)
+				if nivel > estado.Servidor.NivelAlertaMemoria {
+					enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msgMemoriaCritica(memoria, nivel))
+					estado.Servidor.NivelAlertaMemoria = nivel
+					alterou = true
+				} else if nivel < estado.Servidor.NivelAlertaMemoria {
+					estado.Servidor.NivelAlertaMemoria = nivel
+					alterou = true
+				}
 			}
 
-			if err := salvarEstado(arquivoEstado, estado); err != nil {
-				log.Printf("erro ao salvar estado: %v", err)
+			// CPU
+			pctCPU, err := lerCPU()
+			if err != nil {
+				log.Printf("erro ao ler CPU: %v", err)
+			} else {
+				nivel := nivelAlerta(pctCPU)
+				if nivel > estado.Servidor.NivelAlertaCPU {
+					enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msgCPUCritica(pctCPU, nivel))
+					estado.Servidor.NivelAlertaCPU = nivel
+					alterou = true
+				} else if nivel < estado.Servidor.NivelAlertaCPU {
+					estado.Servidor.NivelAlertaCPU = nivel
+					alterou = true
+				}
+			}
+
+			if alterou {
+				if err := salvarEstado(arquivoEstado, estado); err != nil {
+					log.Printf("erro ao salvar estado: %v", err)
+				}
 			}
 		}
 	}
