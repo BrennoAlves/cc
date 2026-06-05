@@ -8,7 +8,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=<usuario>
+User=desk
+WorkingDirectory=/var/lib/cc
 ExecStart=/usr/local/bin/cc -config /etc/cc/config.yaml
 Restart=always
 RestartSec=5
