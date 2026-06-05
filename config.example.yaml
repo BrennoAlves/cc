@@ -18,5 +18,6 @@ services:
 
 # Configurações do servidor
 server:
-  check_interval: 60   # segundos entre healthchecks
-  api_port: 8765       # porta da API /notify (escuta apenas em localhost)
+  check_interval: 60      # segundos entre healthchecks
+  api_port: 8765          # porta da API /notify (escuta apenas em localhost)
+  alert_cooldown_min: 30  # minutos entre alertas repetidos de serviço fora

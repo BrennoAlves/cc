@@ -30,8 +30,9 @@ type Config struct {
 	NotifyToken string    `yaml:"notify_token"`
 	Services    []Servico `yaml:"services"`
 	Server      struct {
-		CheckInterval int `yaml:"check_interval"`
-		APIPort       int `yaml:"api_port"`
+		CheckInterval    int `yaml:"check_interval"`
+		APIPort          int `yaml:"api_port"`
+		AlertCooldownMin int `yaml:"alert_cooldown_min"`
 	} `yaml:"server"`
 }
 
@@ -215,6 +216,7 @@ func main() {
 	defer stop()
 
 	go iniciarServidor(cfg, ctx)
+	go loopHealthcheck(cfg, ctx)
 
 	<-ctx.Done()
 
