@@ -33,6 +33,8 @@ type Config struct {
 		CheckInterval    int `yaml:"check_interval"`
 		APIPort          int `yaml:"api_port"`
 		AlertCooldownMin int `yaml:"alert_cooldown_min"`
+		LimiteDiscoPct   int `yaml:"limite_disco_pct"`
+		LimiteMemoriaPct int `yaml:"limite_memoria_pct"`
 	} `yaml:"server"`
 }
 
@@ -178,15 +180,22 @@ func iniciarServidor(cfg Config, ctx context.Context) {
 
 func msgBoot(cfg Config) string {
 	if len(cfg.Services) == 0 {
-		return "CC — online. Contrato ativo.\n\nNenhum serviço configurado ainda."
+		return "Oi. Estou aqui, mas você não me deu nada pra observar ainda."
 	}
 
-	linhas := make([]string, len(cfg.Services))
+	nomes := make([]string, len(cfg.Services))
 	for i, s := range cfg.Services {
-		linhas[i] = "· " + s.Name
+		nomes[i] = s.Name
 	}
 
-	return fmt.Sprintf("CC — online. Contrato ativo.\n\nMonitorando:\n%s", strings.Join(linhas, "\n"))
+	var lista string
+	if len(nomes) == 1 {
+		lista = nomes[0]
+	} else {
+		lista = strings.Join(nomes[:len(nomes)-1], ", ") + " e " + nomes[len(nomes)-1]
+	}
+
+	return fmt.Sprintf("Oi. Estou de olho no %s. Pode deixar.", lista)
 }
 
 func main() {
@@ -217,12 +226,13 @@ func main() {
 
 	go iniciarServidor(cfg, ctx)
 	go loopHealthcheck(cfg, ctx)
+	go loopServidor(cfg, ctx)
 
 	<-ctx.Done()
 
 	log.Println("cc encerrando...")
 
-	if err := enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, "CC — encerrando."); err != nil {
+	if err := enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, "Vou sair por um momento."); err != nil {
 		log.Printf("aviso: mensagem de shutdown não enviada: %v", err)
 	}
 }

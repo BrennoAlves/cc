@@ -23,8 +23,14 @@ type EstadoServico struct {
 	ConsecutiveFailures int    `json:"consecutive_failures"`
 }
 
+type EstadoServidor struct {
+	UltimoAlertaDisco   string `json:"ultimo_alerta_disco,omitempty"`
+	UltimoAlertaMemoria string `json:"ultimo_alerta_memoria,omitempty"`
+}
+
 type Estado struct {
 	Services map[string]EstadoServico `json:"services"`
+	Servidor EstadoServidor           `json:"servidor"`
 }
 
 type acaoAlerta int
@@ -217,16 +223,13 @@ func fmtDuracao(desde string) string {
 }
 
 func msgServicoCaiu(nome, detalhe string) string {
-	return fmt.Sprintf("CC — %s\n\nO sistema parou. Estou observando.\n\n🔴  OFFLINE\n⏱   %s\n⚙️   %s",
-		nome, fmtAgora(), detalhe)
+	return fmt.Sprintf("Oi, o %s caiu às %s. Dá uma olhada quando puder.", nome, fmtAgora())
 }
 
 func msgServicoAindaFora(nome string, falhas int, downSince, detalhe string) string {
-	return fmt.Sprintf("CC — %s\n\nAinda offline. Já faz algum tempo.\n\n🔴  OFFLINE  ·  %d checks\n⏱   fora há %s\n⚙️   %s",
-		nome, falhas, fmtDuracao(downSince), detalhe)
+	return fmt.Sprintf("O %s ainda está fora, faz %s. Só pra você não esquecer.", nome, fmtDuracao(downSince))
 }
 
 func msgServicoRecuperou(nome, downSince string) string {
-	return fmt.Sprintf("CC — %s\n\nVoltou. Não que eu estivesse preocupada.\n\n🟢  ONLINE\n⏱   ficou fora por %s",
-		nome, fmtDuracao(downSince))
+	return fmt.Sprintf("O %s voltou. Ficou fora por %s, tudo certo agora.", nome, fmtDuracao(downSince))
 }

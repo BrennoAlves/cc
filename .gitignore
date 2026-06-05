@@ -9,6 +9,7 @@ cc-windows.exe
 
 # Estado em runtime
 /var/lib/cc/
+state.json
 
 # Pasta temporária do air (hot reload)
 tmp/

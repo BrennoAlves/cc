@@ -21,3 +21,5 @@ server:
   check_interval: 60      # segundos entre healthchecks
   api_port: 8765          # porta da API /notify (escuta apenas em localhost)
   alert_cooldown_min: 30  # minutos entre alertas repetidos de serviço fora
+  limite_disco_pct: 85    # percentual de disco que dispara alerta
+  limite_memoria_pct: 90  # percentual de memória que dispara alerta
