@@ -58,9 +58,10 @@ type Servico struct {
 }
 
 type NotifyPayload struct {
-	Project string `json:"project"`
-	Message string `json:"message"`
-	Channel string `json:"channel"`
+	Project   string `json:"project"`
+	Message   string `json:"message"`
+	Channel   string `json:"channel"`
+	ImagemURL string `json:"imagem_url"`
 }
 
 type Resposta struct {
@@ -124,8 +125,16 @@ func canalPadrao(cfg Config) Canal {
 //manda a msg pelo canal
 //adicionar novos tipos aqui: discord, email, etc
 func entregar(canal Canal, cfg Config, msg string) error {
+	return entregarComFoto(canal, cfg, msg, "")
+}
+
+//igual ao entregar, mas anexa uma foto quando fotoURL nao for vazia
+func entregarComFoto(canal Canal, cfg Config, msg, fotoURL string) error {
 	switch canal.Tipo {
 	case "telegram", "":
+		if fotoURL != "" {
+			return enviarFotoTelegram(cfg.Telegram.Token, canal.ChatID, fotoURL, msg)
+		}
 		return enviarTelegram(cfg.Telegram.Token, canal.ChatID, msg)
 	default:
 		return fmt.Errorf("tipo de canal '%s' não implementado", canal.Tipo)
@@ -133,12 +142,29 @@ func entregar(canal Canal, cfg Config, msg string) error {
 }
 
 func enviarTelegram(token, chatID, texto string) error {
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
-
-	corpo, err := json.Marshal(map[string]string{
+	return chamarTelegram(token, "sendMessage", map[string]string{
 		"chat_id": chatID,
 		"text":    texto,
 	})
+}
+
+//manda foto via URL publica, com a msg como legenda
+//legenda do telegram tem limite de 1024 chars
+func enviarFotoTelegram(token, chatID, fotoURL, legenda string) error {
+	if len(legenda) > 1024 {
+		legenda = legenda[:1021] + "..."
+	}
+	return chamarTelegram(token, "sendPhoto", map[string]string{
+		"chat_id": chatID,
+		"photo":   fotoURL,
+		"caption": legenda,
+	})
+}
+
+func chamarTelegram(token, metodo string, payload map[string]string) error {
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", token, metodo)
+
+	corpo, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("serializando payload: %w", err)
 	}
@@ -199,7 +225,7 @@ func handlerNotify(cfg Config) http.HandlerFunc {
 			return
 		}
 
-		if err := entregar(canal, cfg, payload.Message); err != nil {
+		if err := entregarComFoto(canal, cfg, payload.Message, payload.ImagemURL); err != nil {
 			responderJSON(w, http.StatusInternalServerError, Resposta{OK: false, Erro: err.Error()})
 			return
 		}
