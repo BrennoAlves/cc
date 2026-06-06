@@ -22,12 +22,19 @@ const (
 	versao      = "0.1.0"
 )
 
+type Canal struct {
+	Nome   string `yaml:"nome"`
+	Tipo   string `yaml:"tipo"`
+	ChatID string `yaml:"chat_id"`
+}
+
 type Config struct {
 	Telegram struct {
 		Token  string `yaml:"token"`
 		ChatID string `yaml:"chat_id"`
 	} `yaml:"telegram"`
 	NotifyToken string    `yaml:"notify_token"`
+	Canais      []Canal   `yaml:"canais"`
 	Services    []Servico `yaml:"services"`
 	Server      struct {
 		CheckInterval    int `yaml:"check_interval"`
@@ -43,12 +50,14 @@ type Config struct {
 type Servico struct {
 	Name      string `yaml:"name"`
 	HealthURL string `yaml:"health_url"`
+	Channel   string `yaml:"channel"`
 	ChatID    string `yaml:"chat_id"`
 }
 
 type NotifyPayload struct {
 	Project string `json:"project"`
 	Message string `json:"message"`
+	Channel string `json:"channel"`
 }
 
 type Resposta struct {
@@ -68,6 +77,55 @@ func carregarConfig(caminho string) (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+//acha o canal certo pra entregar a msg
+//prioridade: override > canal do servico > chat_id direto > padrao global
+func resolverCanal(projeto, override string, cfg Config) Canal {
+	buscarCanal := func(nome string) (Canal, bool) {
+		for _, c := range cfg.Canais {
+			if c.Nome == nome {
+				return c, true
+			}
+		}
+		return Canal{}, false
+	}
+
+	if override != "" {
+		if c, ok := buscarCanal(override); ok {
+			return c
+		}
+	}
+
+	for _, s := range cfg.Services {
+		if s.Name == projeto {
+			if s.Channel != "" {
+				if c, ok := buscarCanal(s.Channel); ok {
+					return c
+				}
+			}
+			if s.ChatID != "" {
+				return Canal{Tipo: "telegram", ChatID: s.ChatID}
+			}
+		}
+	}
+
+	return Canal{Tipo: "telegram", ChatID: cfg.Telegram.ChatID}
+}
+
+func canalPadrao(cfg Config) Canal {
+	return Canal{Tipo: "telegram", ChatID: cfg.Telegram.ChatID}
+}
+
+//manda a msg pelo canal
+//adicionar novos tipos aqui: discord, email, etc
+func entregar(canal Canal, cfg Config, msg string) error {
+	switch canal.Tipo {
+	case "telegram", "":
+		return enviarTelegram(cfg.Telegram.Token, canal.ChatID, msg)
+	default:
+		return fmt.Errorf("tipo de canal '%s' não implementado", canal.Tipo)
+	}
 }
 
 func enviarTelegram(token, chatID, texto string) error {
@@ -107,15 +165,6 @@ func extrairBearer(header string) string {
 	return strings.TrimPrefix(header, "Bearer ")
 }
 
-func chatIDParaProjeto(projeto string, cfg Config) string {
-	for _, s := range cfg.Services {
-		if s.Name == projeto && s.ChatID != "" {
-			return s.ChatID
-		}
-	}
-	return cfg.Telegram.ChatID
-}
-
 func handlerNotify(cfg Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -140,9 +189,9 @@ func handlerNotify(cfg Config) http.HandlerFunc {
 			return
 		}
 
-		chatID := chatIDParaProjeto(payload.Project, cfg)
+		canal := resolverCanal(payload.Project, payload.Channel, cfg)
 
-		if err := enviarTelegram(cfg.Telegram.Token, chatID, payload.Message); err != nil {
+		if err := entregar(canal, cfg, payload.Message); err != nil {
 			responderJSON(w, http.StatusInternalServerError, Resposta{OK: false, Erro: err.Error()})
 			return
 		}
@@ -165,8 +214,7 @@ func iniciarServidor(cfg Config, ctx context.Context) {
 		Handler: mux,
 	}
 
-	// Shutdown gracioso: aguarda o ctx cancelar antes de fechar,
-	// garantindo que requisições em andamento sejam concluídas.
+	//aguarda o ctx pra fechar sem cortar conexoes no meio
 	go func() {
 		<-ctx.Done()
 		servidor.Shutdown(context.Background())
@@ -174,7 +222,7 @@ func iniciarServidor(cfg Config, ctx context.Context) {
 
 	log.Printf("API escutando em %s", addr)
 
-	// ErrServerClosed é retornado pelo Shutdown — não é falha.
+	//ErrServerClosed é o retorno normal do Shutdown, nao é erro
 	if err := servidor.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Printf("erro no servidor HTTP: %v", err)
 	}
@@ -200,7 +248,44 @@ func msgBoot(cfg Config) string {
 	return fmt.Sprintf("Oi. Estou de olho no %s. Pode deixar.", lista)
 }
 
+func cmdNotify(args []string) int {
+	fs := flag.NewFlagSet("notify", flag.ExitOnError)
+	project := fs.String("project", "", "nome do projeto")
+	message := fs.String("message", "", "mensagem a enviar")
+	channel := fs.String("channel", "", "canal de destino (opcional)")
+	configPath := fs.String("config", "config.yaml", "arquivo de configuração")
+	fs.Parse(args)
+
+	if *message == "" {
+		fmt.Fprintln(os.Stderr, "uso: cc notify -message 'texto' [-project nome] [-channel canal] [-config caminho]")
+		return 1
+	}
+
+	cfg, err := carregarConfig(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "erro ao carregar config: %v\n", err)
+		return 1
+	}
+
+	canal := resolverCanal(*project, *channel, cfg)
+	if err := entregar(canal, cfg, *message); err != nil {
+		fmt.Fprintf(os.Stderr, "erro ao enviar: %v\n", err)
+		return 1
+	}
+
+	fmt.Println("ok")
+	return 0
+}
+
 func main() {
+	//dispatch de subcomandos
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "notify":
+			os.Exit(cmdNotify(os.Args[2:]))
+		}
+	}
+
 	configPath := flag.String("config", "config.yaml", "caminho para o arquivo de configuração")
 	flag.Parse()
 
@@ -219,7 +304,7 @@ func main() {
 
 	log.Println("cc iniciando...")
 
-	if err := enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msgBoot(cfg)); err != nil {
+	if err := entregar(canalPadrao(cfg), cfg, msgBoot(cfg)); err != nil {
 		log.Printf("aviso: mensagem de boot não enviada: %v", err)
 	}
 
@@ -236,7 +321,7 @@ func main() {
 
 	log.Println("cc encerrando...")
 
-	if err := enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, "Vou sair por um momento."); err != nil {
+	if err := entregar(canalPadrao(cfg), cfg, "Vou sair por um momento."); err != nil {
 		log.Printf("aviso: mensagem de shutdown não enviada: %v", err)
 	}
 }

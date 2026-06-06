@@ -11,9 +11,9 @@ import (
 )
 
 const (
-	intervalopadrao  = 60
-	cooldownPadrao   = 30
-	arquivoEstado    = "state.json"
+	intervalopadrao = 60
+	cooldownPadrao  = 30
+	arquivoEstado   = "state.json"
 )
 
 type EstadoServico struct {
@@ -39,7 +39,6 @@ type Estado struct {
 	GCP      EstadoGCP                `json:"gcp"`
 }
 
-// nivelAlerta retorna 0 (ok), 70 (aviso) ou 90 (urgente) para um percentual.
 func nivelAlerta(pct float64) int {
 	if pct >= 90 {
 		return 90
@@ -109,8 +108,7 @@ func verificarServico(url string) error {
 	return nil
 }
 
-// processarCheck é uma função pura — recebe o estado anterior e o resultado
-// do check, devolve o novo estado e a ação a tomar. Sem efeitos colaterais.
+//pura: entrada -> saida, sem efeito colateral
 func processarCheck(anterior EstadoServico, err error, cooldownMin int) resultadoCheck {
 	agora := time.Now().UTC().Format(time.RFC3339)
 
@@ -192,15 +190,15 @@ func loopHealthcheck(cfg Config, ctx context.Context) {
 
 				estado.Services[s.Name] = resultado.novoEstado
 
-				chatID := chatIDParaProjeto(s.Name, cfg)
+				canal := resolverCanal(s.Name, "", cfg)
 
 				switch resultado.acao {
 				case alertaCaiu:
-					enviarTelegram(cfg.Telegram.Token, chatID, msgServicoCaiu(s.Name, resultado.detalhe))
+					entregar(canal, cfg, msgServicoCaiu(s.Name, resultado.detalhe))
 				case alertaAindaFora:
-					enviarTelegram(cfg.Telegram.Token, chatID, msgServicoAindaFora(s.Name, anterior.ConsecutiveFailures, anterior.DownSince, resultado.detalhe))
+					entregar(canal, cfg, msgServicoAindaFora(s.Name, anterior.ConsecutiveFailures, anterior.DownSince, resultado.detalhe))
 				case alertaRecuperou:
-					enviarTelegram(cfg.Telegram.Token, chatID, msgServicoRecuperou(s.Name, resultado.detalhe))
+					entregar(canal, cfg, msgServicoRecuperou(s.Name, resultado.detalhe))
 				}
 			}
 

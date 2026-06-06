@@ -4,17 +4,27 @@
 
 telegram:
   token: ""       # token do bot (obtido via @BotFather)
-  chat_id: ""     # id do chat ou canal de destino padrão
+  chat_id: ""     # canal padrão quando nenhum canal específico for encontrado
 
 # Token para autenticar chamadas à API /notify
 # Gerar com: openssl rand -hex 32
 notify_token: ""
 
+# Canais de entrega — cada projeto pode ter o seu
+# tipo "telegram" é o único suportado por ora
+canais:
+  - nome: pessoal
+    tipo: telegram
+    chat_id: ""
+  - nome: meu-app
+    tipo: telegram
+    chat_id: ""
+
 # Serviços monitorados
 services:
   - name: meu-app
     health_url: http://127.0.0.1:8000/health
-    chat_id: ""   # opcional: sobrescreve o chat_id global para este serviço
+    channel: meu-app   # referência a um canal acima para este serviço
 
 # Configurações do servidor
 # Backups automáticos (opcional — remover seção se não usar)

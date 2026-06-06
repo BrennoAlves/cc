@@ -140,7 +140,6 @@ func loopServidor(cfg Config, ctx context.Context) {
 			estado := carregarEstado(arquivoEstado)
 			alterou := false
 
-			// Disco
 			discos, err := lerDisco()
 			if err != nil {
 				log.Printf("erro ao ler disco: %v", err)
@@ -148,7 +147,7 @@ func loopServidor(cfg Config, ctx context.Context) {
 				for _, d := range discos {
 					nivel := nivelAlerta(d.Percent)
 					if nivel > estado.Servidor.NivelAlertaDisco {
-						enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msgDiscoCritico(d, nivel))
+						entregar(canalPadrao(cfg), cfg, msgDiscoCritico(d, nivel))
 						estado.Servidor.NivelAlertaDisco = nivel
 						alterou = true
 					} else if nivel < estado.Servidor.NivelAlertaDisco {
@@ -158,14 +157,13 @@ func loopServidor(cfg Config, ctx context.Context) {
 				}
 			}
 
-			// Memória
 			memoria, err := lerMemoria()
 			if err != nil {
 				log.Printf("erro ao ler memória: %v", err)
 			} else {
 				nivel := nivelAlerta(memoria.Percent)
 				if nivel > estado.Servidor.NivelAlertaMemoria {
-					enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msgMemoriaCritica(memoria, nivel))
+					entregar(canalPadrao(cfg), cfg, msgMemoriaCritica(memoria, nivel))
 					estado.Servidor.NivelAlertaMemoria = nivel
 					alterou = true
 				} else if nivel < estado.Servidor.NivelAlertaMemoria {
@@ -174,14 +172,13 @@ func loopServidor(cfg Config, ctx context.Context) {
 				}
 			}
 
-			// CPU
 			pctCPU, err := lerCPU()
 			if err != nil {
 				log.Printf("erro ao ler CPU: %v", err)
 			} else {
 				nivel := nivelAlerta(pctCPU)
 				if nivel > estado.Servidor.NivelAlertaCPU {
-					enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msgCPUCritica(pctCPU, nivel))
+					entregar(canalPadrao(cfg), cfg, msgCPUCritica(pctCPU, nivel))
 					estado.Servidor.NivelAlertaCPU = nivel
 					alterou = true
 				} else if nivel < estado.Servidor.NivelAlertaCPU {

@@ -14,11 +14,11 @@ import (
 )
 
 type ConfigBackup struct {
-	Nome          string `yaml:"nome"`
-	Caminho       string `yaml:"caminho"`
-	Bucket        string `yaml:"bucket"`
-	RetencaoDias  int    `yaml:"retencao_dias"`
-	Hora          int    `yaml:"hora"`
+	Nome         string `yaml:"nome"`
+	Caminho      string `yaml:"caminho"`
+	Bucket       string `yaml:"bucket"`
+	RetencaoDias int    `yaml:"retencao_dias"`
+	Hora         int    `yaml:"hora"`
 }
 
 func copiarArquivo(origem, destino string) error {
@@ -51,8 +51,6 @@ func comprimirArquivo(origem, destino string) error {
 	}
 	defer dst.Close()
 
-	// Empilha o gzip writer sobre o arquivo — tudo que vai pro gz
-	// passa pelo compressor primeiro antes de chegar no disco.
 	gz := gzip.NewWriter(dst)
 	defer gz.Close()
 
@@ -146,7 +144,6 @@ func rotacionarBackups(bucket, prefixo, token string, retencaoDias int) {
 	corte := time.Now().UTC().AddDate(0, 0, -retencaoDias)
 
 	for _, obj := range objetos {
-		// Nome do arquivo: backups/nome_20260606_030000.db.gz
 		partes := strings.Split(obj, "_")
 		if len(partes) < 2 {
 			continue
@@ -212,15 +209,13 @@ func loopBackup(cfg Config, ctx context.Context) {
 			estado := carregarEstado(arquivoEstado)
 
 			for _, b := range cfg.Backups {
-				hora := b.Hora
-				if agora.Hour() != hora {
+				if agora.Hour() != b.Hora {
 					continue
 				}
 
 				chave := "backup_" + b.Nome
 				ultimo := estado.Services[chave]
 
-				// Verifica se já fez o backup hoje
 				if ultimo.DownSince != "" {
 					t, err := time.Parse("2006-01-02", ultimo.DownSince)
 					if err == nil && t.Format("2006-01-02") == agora.Format("2006-01-02") {
@@ -235,15 +230,12 @@ func loopBackup(cfg Config, ctx context.Context) {
 				}
 
 				if err := realizarBackup(b, token); err != nil {
-					msg := fmt.Sprintf("O backup do %s falhou.\n\n%v", b.Nome, err)
 					log.Printf("backup %s: %v", b.Nome, err)
-					enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msg)
+					entregar(canalPadrao(cfg), cfg, fmt.Sprintf("O backup do %s falhou.\n\n%v", b.Nome, err))
 				} else {
-					msg := fmt.Sprintf("Backup do %s concluído.", b.Nome)
 					log.Printf("backup %s: concluído", b.Nome)
-					enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msg)
+					entregar(canalPadrao(cfg), cfg, fmt.Sprintf("Backup do %s concluído.", b.Nome))
 
-					// Registra que o backup foi feito hoje
 					if estado.Services == nil {
 						estado.Services = make(map[string]EstadoServico)
 					}

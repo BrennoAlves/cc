@@ -120,7 +120,7 @@ func loopGCP(cfg Config, ctx context.Context) {
 		limite = limiteEgressPadraoMB
 	}
 
-	// Verifica uma vez por hora — egress não muda tão rápido
+	//uma vez por hora ta bom, egress nao muda rapido
 	ticker := time.NewTicker(time.Hour)
 	defer ticker.Stop()
 
@@ -148,7 +148,7 @@ func loopGCP(cfg Config, ctx context.Context) {
 
 			estado := carregarEstado(arquivoEstado)
 			if nivel > estado.GCP.NivelAlertaEgress {
-				enviarTelegram(cfg.Telegram.Token, cfg.Telegram.ChatID, msgEgressAviso(usadoMB, limite, nivel))
+				entregar(canalPadrao(cfg), cfg, msgEgressAviso(usadoMB, limite, nivel))
 				estado.GCP.NivelAlertaEgress = nivel
 				if err := salvarEstado(arquivoEstado, estado); err != nil {
 					log.Printf("erro ao salvar estado: %v", err)
