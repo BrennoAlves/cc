@@ -29,7 +29,7 @@ func tokenGCP() (string, error) {
 	}
 	req.Header.Set("Metadata-Flavor", "Google")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("buscando token GCP: %w", err)
 	}
@@ -65,7 +65,7 @@ func egressMesAtualMB(projeto, token string) (float64, error) {
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return 0, fmt.Errorf("consultando monitoring API: %w", err)
 	}
@@ -84,6 +84,9 @@ func egressMesAtualMB(projeto, token string) (float64, error) {
 				} `json:"value"`
 			} `json:"points"`
 		} `json:"timeSeries"`
+	}
+	if len(body) == 0 {
+		return 0, fmt.Errorf("resposta vazia da monitoring API")
 	}
 	if err := json.Unmarshal(body, &resultado); err != nil {
 		return 0, fmt.Errorf("parseando resposta: %w", err)
@@ -146,16 +149,14 @@ func loopGCP(cfg Config, ctx context.Context) {
 			pct := (usadoMB / float64(limite)) * 100
 			nivel := nivelAlerta(pct)
 
-			estado := carregarEstado(arquivoEstado)
-			if nivel > estado.GCP.NivelAlertaEgress {
-				entregar(canalPadrao(cfg), cfg, msgEgressAviso(usadoMB, limite, nivel))
-				estado.GCP.NivelAlertaEgress = nivel
-				if err := salvarEstado(arquivoEstado, estado); err != nil {
-					log.Printf("erro ao salvar estado: %v", err)
+			nivelAnterior := lerEstado().GCP.NivelAlertaEgress
+			if nivel != nivelAnterior {
+				if nivel > nivelAnterior {
+					entregar(canalPadrao(cfg), cfg, msgEgressAviso(usadoMB, limite, nivel))
 				}
-			} else if nivel < estado.GCP.NivelAlertaEgress {
-				estado.GCP.NivelAlertaEgress = nivel
-				salvarEstado(arquivoEstado, estado)
+				atualizarEstado(func(e *Estado) {
+					e.GCP.NivelAlertaEgress = nivel
+				})
 			}
 		}
 	}

@@ -17,6 +17,46 @@ Tudo entregue via Telegram, com roteamento por projeto via canais nomeados.
 
 ---
 
+## Primeiros passos
+
+### 1. Criar o bot Telegram
+
+Abra o Telegram, procure por `@BotFather` e envie `/newbot`. Siga as instruções — você receberá um **token** no formato `123456789:ABC-xyz...`.
+
+Depois, envie qualquer mensagem para o bot que você criou. Em seguida, abra no navegador:
+
+```
+https://api.telegram.org/bot<SEU_TOKEN>/getUpdates
+```
+
+O `chat_id` aparece em `result[0].message.chat.id`. Esse é o ID do destino.
+
+### 2. Configurar e testar localmente
+
+```bash
+git clone https://github.com/BrennoAlves/cc.git
+cd cc
+go build -o cc .
+cp config.example.yaml config.yaml
+# editar config.yaml com token e chat_id
+./cc
+```
+
+Se tudo estiver certo, você receberá uma mensagem no Telegram. `Ctrl+C` encerra.
+
+O arquivo `state.json` é criado no diretório atual. Em produção ele vai para `/var/lib/cc/` (definido pelo `WorkingDirectory` do systemd).
+
+### 3. Fazer deploy no servidor
+
+```bash
+GOOS=linux GOARCH=amd64 go build -o cc-linux .
+scp cc-linux usuario@servidor:/usr/local/bin/cc
+```
+
+Siga a seção [Deploy com systemd](#deploy-com-systemd) abaixo.
+
+---
+
 ## Instalação
 
 ### Compilar do fonte
@@ -250,6 +290,32 @@ gcloud compute instances set-service-account NOME_DA_VM --zone=ZONA \
   --scopes=devstorage.read_write,logging.write,monitoring,...
 gcloud compute instances start NOME_DA_VM --zone=ZONA
 ```
+
+---
+
+## Troubleshooting
+
+**Mensagem não chega no Telegram**
+Verifique se o token está correto e se você enviou ao menos uma mensagem pro bot antes de tentar. Teste direto:
+```bash
+curl "https://api.telegram.org/bot<TOKEN>/getMe"
+```
+Deve retornar `{"ok":true,...}`.
+
+**API `/notify` retorna 401**
+O header precisa ser exatamente `Authorization: Bearer SEU_TOKEN`. Tokens com caracteres especiais (`!`, `#`, `%`) precisam de aspas simples no shell.
+
+**API `/notify` retorna `canal 'x' não encontrado`**
+O campo `channel` no payload deve bater exatamente com um `nome` definido em `canais:` no config. Verifique typos.
+
+**`state.json`: permission denied nos logs**
+O serviço não tem permissão de escrita no diretório de trabalho. Verifique que `WorkingDirectory=/var/lib/cc` está no `.service` e que o diretório pertence ao usuário configurado em `User=`.
+
+**Backup não roda no horário configurado**
+O campo `hora` é interpretado como UTC. Se seu servidor está em outro timezone, ajuste. Verifique os logs com `journalctl -u cc -f`.
+
+**GCP egress sempre retorna 0**
+A service account da VM precisa do scope `monitoring` habilitado. Veja a seção [GCP free tier](#gcp-free-tier).
 
 ---
 

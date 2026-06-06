@@ -77,7 +77,7 @@ func uploadGCS(caminho, bucket, nome, token string) error {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/gzip")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("upload falhou: %w", err)
 	}
@@ -99,7 +99,7 @@ func listarBackupsGCS(bucket, prefixo, token string) ([]string, error) {
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +126,7 @@ func deletarObjetoGCS(bucket, nome, token string) error {
 	req, _ := http.NewRequest("DELETE", url, nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -206,21 +206,15 @@ func loopBackup(cfg Config, ctx context.Context) {
 			return
 		case <-ticker.C:
 			agora := time.Now().UTC()
-			estado := carregarEstado(arquivoEstado)
+			hoje := agora.Format("2006-01-02")
 
 			for _, b := range cfg.Backups {
 				if agora.Hour() != b.Hora {
 					continue
 				}
 
-				chave := "backup_" + b.Nome
-				ultimo := estado.Services[chave]
-
-				if ultimo.DownSince != "" {
-					t, err := time.Parse("2006-01-02", ultimo.DownSince)
-					if err == nil && t.Format("2006-01-02") == agora.Format("2006-01-02") {
-						continue
-					}
+				if lerEstado().UltimoBackup[b.Nome] == hoje {
+					continue
 				}
 
 				token, err := tokenGCP()
@@ -235,14 +229,9 @@ func loopBackup(cfg Config, ctx context.Context) {
 				} else {
 					log.Printf("backup %s: concluído", b.Nome)
 					entregar(canalPadrao(cfg), cfg, fmt.Sprintf("Backup do %s concluído.", b.Nome))
-
-					if estado.Services == nil {
-						estado.Services = make(map[string]EstadoServico)
-					}
-					estado.Services[chave] = EstadoServico{
-						DownSince: agora.Format("2006-01-02"),
-					}
-					salvarEstado(arquivoEstado, estado)
+					atualizarEstado(func(e *Estado) {
+						e.UltimoBackup[b.Nome] = hoje
+					})
 				}
 			}
 		}

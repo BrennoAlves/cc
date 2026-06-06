@@ -11,16 +11,19 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 const (
 	portaPadrao = 8765
-	timeoutHTTP = 10
 	versao      = "0.1.0"
 )
+
+var httpClient = &http.Client{Timeout: 10 * time.Second}
 
 type Canal struct {
 	Nome   string `yaml:"nome"`
@@ -81,7 +84,7 @@ func carregarConfig(caminho string) (Config, error) {
 
 //acha o canal certo pra entregar a msg
 //prioridade: override > canal do servico > chat_id direto > padrao global
-func resolverCanal(projeto, override string, cfg Config) Canal {
+func resolverCanal(projeto, override string, cfg Config) (Canal, error) {
 	buscarCanal := func(nome string) (Canal, bool) {
 		for _, c := range cfg.Canais {
 			if c.Nome == nome {
@@ -93,24 +96,25 @@ func resolverCanal(projeto, override string, cfg Config) Canal {
 
 	if override != "" {
 		if c, ok := buscarCanal(override); ok {
-			return c
+			return c, nil
 		}
+		return Canal{}, fmt.Errorf("canal '%s' não encontrado", override)
 	}
 
 	for _, s := range cfg.Services {
 		if s.Name == projeto {
 			if s.Channel != "" {
 				if c, ok := buscarCanal(s.Channel); ok {
-					return c
+					return c, nil
 				}
 			}
 			if s.ChatID != "" {
-				return Canal{Tipo: "telegram", ChatID: s.ChatID}
+				return Canal{Tipo: "telegram", ChatID: s.ChatID}, nil
 			}
 		}
 	}
 
-	return Canal{Tipo: "telegram", ChatID: cfg.Telegram.ChatID}
+	return Canal{Tipo: "telegram", ChatID: cfg.Telegram.ChatID}, nil
 }
 
 func canalPadrao(cfg Config) Canal {
@@ -139,7 +143,7 @@ func enviarTelegram(token, chatID, texto string) error {
 		return fmt.Errorf("serializando payload: %w", err)
 	}
 
-	resp, err := http.Post(url, "application/json", bytes.NewReader(corpo))
+	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(corpo))
 	if err != nil {
 		return fmt.Errorf("chamando API: %w", err)
 	}
@@ -189,7 +193,11 @@ func handlerNotify(cfg Config) http.HandlerFunc {
 			return
 		}
 
-		canal := resolverCanal(payload.Project, payload.Channel, cfg)
+		canal, err := resolverCanal(payload.Project, payload.Channel, cfg)
+		if err != nil {
+			responderJSON(w, http.StatusBadRequest, Resposta{OK: false, Erro: err.Error()})
+			return
+		}
 
 		if err := entregar(canal, cfg, payload.Message); err != nil {
 			responderJSON(w, http.StatusInternalServerError, Resposta{OK: false, Erro: err.Error()})
@@ -217,12 +225,14 @@ func iniciarServidor(cfg Config, ctx context.Context) {
 	//aguarda o ctx pra fechar sem cortar conexoes no meio
 	go func() {
 		<-ctx.Done()
-		servidor.Shutdown(context.Background())
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		servidor.Shutdown(shutCtx)
 	}()
 
 	log.Printf("API escutando em %s", addr)
 
-	//ErrServerClosed é o retorno normal do Shutdown, nao é erro
+	//ErrServerClosed eh o retorno normal do Shutdown, nao eh erro
 	if err := servidor.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Printf("erro no servidor HTTP: %v", err)
 	}
@@ -267,7 +277,12 @@ func cmdNotify(args []string) int {
 		return 1
 	}
 
-	canal := resolverCanal(*project, *channel, cfg)
+	canal, err := resolverCanal(*project, *channel, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "erro: %v\n", err)
+		return 1
+	}
+
 	if err := entregar(canal, cfg, *message); err != nil {
 		fmt.Fprintf(os.Stderr, "erro ao enviar: %v\n", err)
 		return 1
@@ -311,15 +326,26 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	go iniciarServidor(cfg, ctx)
-	go loopHealthcheck(cfg, ctx)
-	go loopServidor(cfg, ctx)
-	go loopGCP(cfg, ctx)
-	go loopBackup(cfg, ctx)
+	var wg sync.WaitGroup
+
+	lancar := func(fn func(Config, context.Context)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn(cfg, ctx)
+		}()
+	}
+
+	lancar(iniciarServidor)
+	lancar(loopHealthcheck)
+	lancar(loopServidor)
+	lancar(loopGCP)
+	lancar(loopBackup)
 
 	<-ctx.Done()
 
 	log.Println("cc encerrando...")
+	wg.Wait()
 
 	if err := entregar(canalPadrao(cfg), cfg, "Vou sair por um momento."); err != nil {
 		log.Printf("aviso: mensagem de shutdown não enviada: %v", err)

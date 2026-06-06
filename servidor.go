@@ -137,22 +137,20 @@ func loopServidor(cfg Config, ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			estado := carregarEstado(arquivoEstado)
-			alterou := false
-
 			discos, err := lerDisco()
 			if err != nil {
 				log.Printf("erro ao ler disco: %v", err)
 			} else {
 				for _, d := range discos {
 					nivel := nivelAlerta(d.Percent)
-					if nivel > estado.Servidor.NivelAlertaDisco {
-						entregar(canalPadrao(cfg), cfg, msgDiscoCritico(d, nivel))
-						estado.Servidor.NivelAlertaDisco = nivel
-						alterou = true
-					} else if nivel < estado.Servidor.NivelAlertaDisco {
-						estado.Servidor.NivelAlertaDisco = nivel
-						alterou = true
+					nivelAnterior := lerEstado().Servidor.NivelAlertaDisco
+					if nivel != nivelAnterior {
+						if nivel > nivelAnterior {
+							entregar(canalPadrao(cfg), cfg, msgDiscoCritico(d, nivel))
+						}
+						atualizarEstado(func(e *Estado) {
+							e.Servidor.NivelAlertaDisco = nivel
+						})
 					}
 				}
 			}
@@ -162,13 +160,14 @@ func loopServidor(cfg Config, ctx context.Context) {
 				log.Printf("erro ao ler memória: %v", err)
 			} else {
 				nivel := nivelAlerta(memoria.Percent)
-				if nivel > estado.Servidor.NivelAlertaMemoria {
-					entregar(canalPadrao(cfg), cfg, msgMemoriaCritica(memoria, nivel))
-					estado.Servidor.NivelAlertaMemoria = nivel
-					alterou = true
-				} else if nivel < estado.Servidor.NivelAlertaMemoria {
-					estado.Servidor.NivelAlertaMemoria = nivel
-					alterou = true
+				nivelAnterior := lerEstado().Servidor.NivelAlertaMemoria
+				if nivel != nivelAnterior {
+					if nivel > nivelAnterior {
+						entregar(canalPadrao(cfg), cfg, msgMemoriaCritica(memoria, nivel))
+					}
+					atualizarEstado(func(e *Estado) {
+						e.Servidor.NivelAlertaMemoria = nivel
+					})
 				}
 			}
 
@@ -177,19 +176,14 @@ func loopServidor(cfg Config, ctx context.Context) {
 				log.Printf("erro ao ler CPU: %v", err)
 			} else {
 				nivel := nivelAlerta(pctCPU)
-				if nivel > estado.Servidor.NivelAlertaCPU {
-					entregar(canalPadrao(cfg), cfg, msgCPUCritica(pctCPU, nivel))
-					estado.Servidor.NivelAlertaCPU = nivel
-					alterou = true
-				} else if nivel < estado.Servidor.NivelAlertaCPU {
-					estado.Servidor.NivelAlertaCPU = nivel
-					alterou = true
-				}
-			}
-
-			if alterou {
-				if err := salvarEstado(arquivoEstado, estado); err != nil {
-					log.Printf("erro ao salvar estado: %v", err)
+				nivelAnterior := lerEstado().Servidor.NivelAlertaCPU
+				if nivel != nivelAnterior {
+					if nivel > nivelAnterior {
+						entregar(canalPadrao(cfg), cfg, msgCPUCritica(pctCPU, nivel))
+					}
+					atualizarEstado(func(e *Estado) {
+						e.Servidor.NivelAlertaCPU = nivel
+					})
 				}
 			}
 		}

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -15,6 +16,8 @@ const (
 	cooldownPadrao  = 30
 	arquivoEstado   = "state.json"
 )
+
+var estadoMu sync.Mutex
 
 type EstadoServico struct {
 	Down                bool   `json:"down"`
@@ -34,9 +37,10 @@ type EstadoGCP struct {
 }
 
 type Estado struct {
-	Services map[string]EstadoServico `json:"services"`
-	Servidor EstadoServidor           `json:"servidor"`
-	GCP      EstadoGCP                `json:"gcp"`
+	Services     map[string]EstadoServico `json:"services"`
+	Servidor     EstadoServidor           `json:"servidor"`
+	GCP          EstadoGCP                `json:"gcp"`
+	UltimoBackup map[string]string        `json:"ultimo_backup,omitempty"`
 }
 
 func nivelAlerta(pct float64) int {
@@ -52,7 +56,7 @@ func nivelAlerta(pct float64) int {
 type acaoAlerta int
 
 const (
-	semAlerta       acaoAlerta = iota
+	semAlerta acaoAlerta = iota
 	alertaCaiu
 	alertaAindaFora
 	alertaRecuperou
@@ -65,7 +69,10 @@ type resultadoCheck struct {
 }
 
 func estadoVazio() Estado {
-	return Estado{Services: make(map[string]EstadoServico)}
+	return Estado{
+		Services:     make(map[string]EstadoServico),
+		UltimoBackup: make(map[string]string),
+	}
 }
 
 func carregarEstado(caminho string) Estado {
@@ -82,6 +89,9 @@ func carregarEstado(caminho string) Estado {
 	if estado.Services == nil {
 		estado.Services = make(map[string]EstadoServico)
 	}
+	if estado.UltimoBackup == nil {
+		estado.UltimoBackup = make(map[string]string)
+	}
 
 	return estado
 }
@@ -91,11 +101,27 @@ func salvarEstado(caminho string, estado Estado) error {
 	if err != nil {
 		return fmt.Errorf("serializando estado: %w", err)
 	}
-	return os.WriteFile(caminho, dados, 0644)
+	return os.WriteFile(caminho, dados, 0600)
+}
+
+// atualizarEstado é a única forma correta de modificar o state.json.
+// Segura o mutex, carrega, executa fn, salva. Sem race condition.
+func atualizarEstado(fn func(*Estado)) error {
+	estadoMu.Lock()
+	defer estadoMu.Unlock()
+	estado := carregarEstado(arquivoEstado)
+	fn(&estado)
+	return salvarEstado(arquivoEstado, estado)
+}
+
+func lerEstado() Estado {
+	estadoMu.Lock()
+	defer estadoMu.Unlock()
+	return carregarEstado(arquivoEstado)
 }
 
 func verificarServico(url string) error {
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return err
 	}
@@ -181,16 +207,20 @@ func loopHealthcheck(cfg Config, ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			estado := carregarEstado(arquivoEstado)
-
 			for _, s := range cfg.Services {
-				err := verificarServico(s.HealthURL)
-				anterior := estado.Services[s.Name]
-				resultado := processarCheck(anterior, err, cooldown)
+				checkErr := verificarServico(s.HealthURL)
+				anterior := lerEstado().Services[s.Name]
+				resultado := processarCheck(anterior, checkErr, cooldown)
 
-				estado.Services[s.Name] = resultado.novoEstado
+				atualizarEstado(func(e *Estado) {
+					e.Services[s.Name] = resultado.novoEstado
+				})
 
-				canal := resolverCanal(s.Name, "", cfg)
+				canal, err := resolverCanal(s.Name, "", cfg)
+				if err != nil {
+					log.Printf("healthcheck: %v", err)
+					continue
+				}
 
 				switch resultado.acao {
 				case alertaCaiu:
@@ -200,10 +230,6 @@ func loopHealthcheck(cfg Config, ctx context.Context) {
 				case alertaRecuperou:
 					entregar(canal, cfg, msgServicoRecuperou(s.Name, resultado.detalhe))
 				}
-			}
-
-			if err := salvarEstado(arquivoEstado, estado); err != nil {
-				log.Printf("erro ao salvar estado: %v", err)
 			}
 		}
 	}
