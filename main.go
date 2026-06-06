@@ -129,16 +129,41 @@ func entregar(canal Canal, cfg Config, msg string) error {
 }
 
 //igual ao entregar, mas anexa uma foto quando fotoURL nao for vazia
+//o texto vai sempre primeiro pra garantir entrega mesmo se a foto falhar
 func entregarComFoto(canal Canal, cfg Config, msg, fotoURL string) error {
 	switch canal.Tipo {
 	case "telegram", "":
-		if fotoURL != "" {
-			return enviarFotoTelegram(cfg.Telegram.Token, canal.ChatID, fotoURL, msg)
+		if err := enviarTelegram(cfg.Telegram.Token, canal.ChatID, msg); err != nil {
+			return err
 		}
-		return enviarTelegram(cfg.Telegram.Token, canal.ChatID, msg)
+		if fotoURL != "" {
+			anexarFoto(cfg.Telegram.Token, canal.ChatID, fotoURL)
+		}
+		return nil
 	default:
 		return fmt.Errorf("tipo de canal '%s' não implementado", canal.Tipo)
 	}
+}
+
+//tenta como foto (preview bonito) e cai pra documento se a imagem for grande
+//demais pro sendPhoto (limite de 10000px de largura+altura por URL).
+//o sendPhoto que falha envenena o cache do telegram pra aquela URL, entao o
+//fallback usa a URL "furada" pra forcar uma nova busca.
+func anexarFoto(token, chatID, fotoURL string) {
+	if err := enviarFotoTelegram(token, chatID, fotoURL); err == nil {
+		return
+	}
+	if err := enviarDocumentoTelegram(token, chatID, comCacheBust(fotoURL)); err != nil {
+		log.Printf("notify: texto entregue mas a foto falhou: %v", err)
+	}
+}
+
+func comCacheBust(u string) string {
+	sep := "?"
+	if strings.Contains(u, "?") {
+		sep = "&"
+	}
+	return fmt.Sprintf("%s%scc=%d", u, sep, time.Now().UnixNano())
 }
 
 func enviarTelegram(token, chatID, texto string) error {
@@ -148,16 +173,19 @@ func enviarTelegram(token, chatID, texto string) error {
 	})
 }
 
-//manda foto via URL publica, com a msg como legenda
-//legenda do telegram tem limite de 1024 chars
-func enviarFotoTelegram(token, chatID, fotoURL, legenda string) error {
-	if len(legenda) > 1024 {
-		legenda = legenda[:1021] + "..."
-	}
+//manda foto via URL publica (preview inline)
+func enviarFotoTelegram(token, chatID, fotoURL string) error {
 	return chamarTelegram(token, "sendPhoto", map[string]string{
 		"chat_id": chatID,
 		"photo":   fotoURL,
-		"caption": legenda,
+	})
+}
+
+//manda como documento — sem limite de dimensao, preserva resolucao original
+func enviarDocumentoTelegram(token, chatID, fotoURL string) error {
+	return chamarTelegram(token, "sendDocument", map[string]string{
+		"chat_id":  chatID,
+		"document": fotoURL,
 	})
 }
 
