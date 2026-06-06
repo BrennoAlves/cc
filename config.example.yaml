@@ -17,6 +17,14 @@ services:
     chat_id: ""   # opcional: sobrescreve o chat_id global para este serviço
 
 # Configurações do servidor
+# Backups automáticos (opcional — remover seção se não usar)
+backups:
+  - nome: meu-app
+    caminho: /caminho/para/banco.db
+    bucket: meu-bucket-backups
+    retencao_dias: 7
+    hora: 3            # hora UTC para rodar o backup (0-23)
+
 # Monitoramento GCP free tier (opcional — remover seção se não usar GCP)
 gcp:
   projeto: ""           # id do projeto GCP

@@ -36,7 +36,8 @@ type Config struct {
 		LimiteDiscoPct   int `yaml:"limite_disco_pct"`
 		LimiteMemoriaPct int `yaml:"limite_memoria_pct"`
 	} `yaml:"server"`
-	GCP *ConfigGCP `yaml:"gcp"`
+	GCP     *ConfigGCP     `yaml:"gcp"`
+	Backups []ConfigBackup `yaml:"backups"`
 }
 
 type Servico struct {
@@ -229,6 +230,7 @@ func main() {
 	go loopHealthcheck(cfg, ctx)
 	go loopServidor(cfg, ctx)
 	go loopGCP(cfg, ctx)
+	go loopBackup(cfg, ctx)
 
 	<-ctx.Done()
 
