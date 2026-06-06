@@ -191,9 +191,12 @@ Content-Type: application/json
 {
   "project": "meu-app",
   "message": "Texto da notificação",
-  "channel": "pessoal"     // opcional — sobrescreve o canal do projeto
+  "channel": "pessoal",        // opcional — sobrescreve o canal do projeto
+  "imagem_url": "https://..."  // opcional — anexa uma imagem por URL pública
 }
 ```
+
+O texto é sempre entregue primeiro, então uma falha no envio da imagem nunca derruba a notificação. Quando `imagem_url` está presente, o cc tenta enviar como foto (preview inline); se a imagem for grande demais para o preview do Telegram (limite de 10000px de largura+altura), envia como documento em resolução cheia. A URL precisa ser **publicamente acessível** — o Telegram busca a imagem por conta própria.
 
 ### Resposta
 
