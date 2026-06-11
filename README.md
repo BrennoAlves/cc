@@ -12,6 +12,7 @@ Daemon de monitoramento e notificações para servidores Linux. Roda como servi�
 - **Backups** — backup automático de bancos SQLite para o Cloud Storage, com rotação por retenção
 - **API `/notify`** — recebe notificações de qualquer aplicação via HTTP com autenticação Bearer
 - **Subcomando `cc notify`** — envia notificações diretamente pela linha de comando
+- **Quiet hours** — represa notificações de rotina durante a madrugada e entrega um digest ao acordar; alertas críticos passam direto
 
 Tudo entregue via Telegram, com roteamento por projeto via canais nomeados.
 
@@ -134,7 +135,14 @@ server:
   alert_cooldown_min: 30   # minutos entre alertas repetidos de serviço fora
   limite_disco_pct: 85     # percentual de disco que dispara alerta
   limite_memoria_pct: 90   # percentual de memória que dispara alerta
+  quiet_hours:
+    enabled: true
+    inicio: 22             # hora de início do silêncio (22 = 22h)
+    fim: 8                 # hora de fim do silêncio (8 = 8h)
+    timezone: "America/Sao_Paulo"
 ```
+
+Com `quiet_hours` habilitado, notificações de rotina (backup concluído, disco/memória/CPU em 70%, chamadas à API `/notify` sem `"urgente": true`) ficam represadas durante a janela e chegam em digest quando ela termina. Alertas críticos (recursos em 90%+, serviço fora do ar, backup falhou) são entregues imediatamente em qualquer horário.
 
 ---
 
@@ -192,9 +200,12 @@ Content-Type: application/json
   "project": "meu-app",
   "message": "Texto da notificação",
   "channel": "pessoal",        // opcional — sobrescreve o canal do projeto
-  "imagem_url": "https://..."  // opcional — anexa uma imagem por URL pública
+  "imagem_url": "https://...", // opcional — anexa uma imagem por URL pública
+  "urgente": false             // opcional — true entrega imediatamente mesmo durante o quiet_hours
 }
 ```
+
+Durante o `quiet_hours`, notificações sem `"urgente": true` ficam represadas e chegam em digest quando a janela termina. A API responde `{ "ok": true }` na hora — a mensagem foi aceita e será entregue. Fora da janela (ou com `quiet_hours` desabilitado), tudo é entregue imediatamente.
 
 O texto é sempre entregue primeiro, então uma falha no envio da imagem nunca derruba a notificação. Quando `imagem_url` está presente, o cc tenta enviar como foto (preview inline); se a imagem for grande demais para o preview do Telegram (limite de 10000px de largura+altura), envia como documento em resolução cheia. A URL precisa ser **publicamente acessível** — o Telegram busca a imagem por conta própria.
 
@@ -251,9 +262,11 @@ Para scripts shell e cron jobs, sem precisar construir a requisição HTTP:
 
 ```bash
 cc notify -message "Backup concluído" -project meu-app
-cc notify -message "Alerta crítico" -channel pessoal
+cc notify -message "Alerta crítico" -channel pessoal -urgente
 cc notify -message "Deploy ok" -project meu-app -config /etc/cc/config.yaml
 ```
+
+O subcomando roteia pela API local do daemon, então respeita o `quiet_hours` como qualquer outra chamada — use `-urgente` para entrega imediata. Se o daemon não estiver rodando, a mensagem é entregue diretamente.
 
 ---
 

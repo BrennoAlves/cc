@@ -37,9 +37,10 @@ type EstadoGCP struct {
 }
 
 type MsgPendente struct {
-	Canal Canal     `json:"canal"`
-	Msg   string    `json:"msg"`
-	Em    time.Time `json:"em"`
+	Canal     Canal     `json:"canal"`
+	Msg       string    `json:"msg"`
+	ImagemURL string    `json:"imagem_url,omitempty"`
+	Em        time.Time `json:"em"`
 }
 
 type Estado struct {

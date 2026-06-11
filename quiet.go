@@ -30,11 +30,16 @@ func notificarRotina(canal Canal, cfg Config, msg string) {
 		entregar(canal, cfg, msg)
 		return
 	}
+	bufferizarRotina(canal, msg, "")
+}
+
+func bufferizarRotina(canal Canal, msg, fotoURL string) {
 	atualizarEstado(func(e *Estado) {
 		e.PendentesRotina = append(e.PendentesRotina, MsgPendente{
-			Canal: canal,
-			Msg:   msg,
-			Em:    time.Now(),
+			Canal:     canal,
+			Msg:       msg,
+			ImagemURL: fotoURL,
+			Em:        time.Now(),
 		})
 	})
 }
@@ -77,12 +82,25 @@ func entregarPendentes(cfg Config) {
 	}
 
 	for _, g := range grupos {
-		if len(g.msgs) == 1 {
-			entregar(g.canal, cfg, g.msgs[0].Msg)
+		// mensagens com imagem saem individuais (o digest não comporta fotos)
+		var semFoto []MsgPendente
+		for _, p := range g.msgs {
+			if p.ImagemURL != "" {
+				entregarComFoto(g.canal, cfg, p.Msg, p.ImagemURL)
+			} else {
+				semFoto = append(semFoto, p)
+			}
+		}
+
+		if len(semFoto) == 0 {
+			continue
+		}
+		if len(semFoto) == 1 {
+			entregar(g.canal, cfg, semFoto[0].Msg)
 			continue
 		}
 		var linhas []string
-		for _, p := range g.msgs {
+		for _, p := range semFoto {
 			hora := p.Em.In(loc).Format("15:04")
 			linhas = append(linhas, fmt.Sprintf("• %s — %s", hora, p.Msg))
 		}

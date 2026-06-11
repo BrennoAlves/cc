@@ -152,7 +152,12 @@ func loopGCP(cfg Config, ctx context.Context) {
 			nivelAnterior := lerEstado().GCP.NivelAlertaEgress
 			if nivel != nivelAnterior {
 				if nivel > nivelAnterior {
-					entregar(canalPadrao(cfg), cfg, msgEgressAviso(usadoMB, limite, nivel))
+					msg := msgEgressAviso(usadoMB, limite, nivel)
+					if nivel >= 90 {
+						entregar(canalPadrao(cfg), cfg, msg)
+					} else {
+						notificarRotina(canalPadrao(cfg), cfg, msg)
+					}
 				}
 				atualizarEstado(func(e *Estado) {
 					e.GCP.NivelAlertaEgress = nivel

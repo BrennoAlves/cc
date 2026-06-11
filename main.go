@@ -68,7 +68,7 @@ type NotifyPayload struct {
 	Message   string `json:"message"`
 	Channel   string `json:"channel"`
 	ImagemURL string `json:"imagem_url"`
-	Rotina    bool   `json:"rotina"`
+	Urgente   bool   `json:"urgente"`
 }
 
 type Resposta struct {
@@ -260,8 +260,8 @@ func handlerNotify(cfg Config) http.HandlerFunc {
 			return
 		}
 
-		if payload.Rotina {
-			notificarRotina(canal, cfg, payload.Message)
+		if !payload.Urgente && eHorarioQuieto(cfg) {
+			bufferizarRotina(canal, payload.Message, payload.ImagemURL)
 		} else {
 			if err := entregarComFoto(canal, cfg, payload.Message, payload.ImagemURL); err != nil {
 				responderJSON(w, http.StatusInternalServerError, Resposta{OK: false, Erro: err.Error()})
@@ -328,11 +328,12 @@ func cmdNotify(args []string) int {
 	project := fs.String("project", "", "nome do projeto")
 	message := fs.String("message", "", "mensagem a enviar")
 	channel := fs.String("channel", "", "canal de destino (opcional)")
+	urgente := fs.Bool("urgente", false, "entrega imediata mesmo durante o quiet_hours")
 	configPath := fs.String("config", "config.yaml", "arquivo de configuração")
 	fs.Parse(args)
 
 	if *message == "" {
-		fmt.Fprintln(os.Stderr, "uso: cc notify -message 'texto' [-project nome] [-channel canal] [-config caminho]")
+		fmt.Fprintln(os.Stderr, "uso: cc notify -message 'texto' [-project nome] [-channel canal] [-urgente] [-config caminho]")
 		return 1
 	}
 
@@ -342,6 +343,16 @@ func cmdNotify(args []string) int {
 		return 1
 	}
 
+	// roteia pelo daemon: só ele consegue segurar a mensagem durante o
+	// quiet_hours, porque o processo do CLI morre logo em seguida e o
+	// state.json não tem lock entre processos
+	payload := NotifyPayload{Project: *project, Message: *message, Channel: *channel, Urgente: *urgente}
+	if err := notificarViaAPI(cfg, payload); err == nil {
+		fmt.Println("ok")
+		return 0
+	}
+
+	// daemon fora do ar: entrega direto pra não perder a mensagem
 	canal, err := resolverCanal(*project, *channel, cfg)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "erro: %v\n", err)
@@ -355,6 +366,36 @@ func cmdNotify(args []string) int {
 
 	fmt.Println("ok")
 	return 0
+}
+
+func notificarViaAPI(cfg Config, payload NotifyPayload) error {
+	porta := cfg.Server.APIPort
+	if porta == 0 {
+		porta = portaPadrao
+	}
+
+	corpo, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/notify", porta), bytes.NewReader(corpo))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.NotifyToken)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("API retornou status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func main() {
