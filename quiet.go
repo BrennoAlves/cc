@@ -16,12 +16,16 @@ func eHorarioQuieto(cfg Config) bool {
 	if err != nil {
 		loc = time.UTC
 	}
-	hora := time.Now().In(loc).Hour()
-	if qh.Inicio < qh.Fim {
-		return hora >= qh.Inicio && hora < qh.Fim
+	return horaDentroJanela(time.Now().In(loc).Hour(), qh.Inicio, qh.Fim)
+}
+
+// pura: hora atual está dentro da janela [inicio, fim)?
+func horaDentroJanela(hora, inicio, fim int) bool {
+	if inicio < fim {
+		return hora >= inicio && hora < fim
 	}
 	// wrap em meia-noite (ex: 22 até 8)
-	return hora >= qh.Inicio || hora < qh.Fim
+	return hora >= inicio || hora < fim
 }
 
 // notificarRotina entrega imediatamente fora do quiet_hours ou bufferiza para entregar ao acordar.

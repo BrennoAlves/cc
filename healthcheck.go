@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	intervalopadrao = 60
-	cooldownPadrao  = 30
-	arquivoEstado   = "state.json"
+	intervalopadrao     = 60
+	cooldownPadrao      = 30
+	falhasParaAlertaPad = 2
+	arquivoEstado       = "state.json"
 )
 
 var estadoMu sync.Mutex
@@ -27,9 +28,11 @@ type EstadoServico struct {
 }
 
 type EstadoServidor struct {
-	NivelAlertaDisco   int `json:"nivel_alerta_disco"`
-	NivelAlertaMemoria int `json:"nivel_alerta_memoria"`
-	NivelAlertaCPU     int `json:"nivel_alerta_cpu"`
+	//um nível por partição (chave = mountpoint), senão discos diferentes
+	//sobrescrevem o estado um do outro e geram alertas repetidos
+	NivelAlertaDisco   map[string]int `json:"nivel_alerta_disco"`
+	NivelAlertaMemoria int            `json:"nivel_alerta_memoria"`
+	NivelAlertaCPU     int            `json:"nivel_alerta_cpu"`
 }
 
 type EstadoGCP struct {
@@ -142,8 +145,10 @@ func verificarServico(url string) error {
 	return nil
 }
 
-//pura: entrada -> saida, sem efeito colateral
-func processarCheck(anterior EstadoServico, err error, cooldownMin int) resultadoCheck {
+// pura: entrada -> saida, sem efeito colateral.
+// Down só vira true (e o alerta só sai) após falhasParaAlerta falhas
+// consecutivas — um blip de rede não acorda ninguém.
+func processarCheck(anterior EstadoServico, err error, cooldownMin, falhasParaAlerta int) resultadoCheck {
 	agora := time.Now().UTC().Format(time.RFC3339)
 
 	if err == nil {
@@ -154,7 +159,8 @@ func processarCheck(anterior EstadoServico, err error, cooldownMin int) resultad
 				detalhe:    anterior.DownSince,
 			}
 		}
-		return resultadoCheck{novoEstado: anterior, acao: semAlerta}
+		//falhas abaixo do threshold zeram em silêncio
+		return resultadoCheck{novoEstado: EstadoServico{}, acao: semAlerta}
 	}
 
 	falhas := anterior.ConsecutiveFailures + 1
@@ -164,13 +170,17 @@ func processarCheck(anterior EstadoServico, err error, cooldownMin int) resultad
 	}
 
 	novoEstado := EstadoServico{
-		Down:                true,
+		Down:                anterior.Down,
 		DownSince:           downSince,
 		ConsecutiveFailures: falhas,
 		LastAlert:           anterior.LastAlert,
 	}
 
 	if !anterior.Down {
+		if falhas < falhasParaAlerta {
+			return resultadoCheck{novoEstado: novoEstado, acao: semAlerta}
+		}
+		novoEstado.Down = true
 		novoEstado.LastAlert = agora
 		return resultadoCheck{novoEstado: novoEstado, acao: alertaCaiu, detalhe: err.Error()}
 	}
@@ -205,6 +215,11 @@ func loopHealthcheck(cfg Config, ctx context.Context) {
 		cooldown = cooldownPadrao
 	}
 
+	falhasParaAlerta := cfg.Server.FalhasParaAlerta
+	if falhasParaAlerta == 0 {
+		falhasParaAlerta = falhasParaAlertaPad
+	}
+
 	ticker := time.NewTicker(time.Duration(intervalo) * time.Second)
 	defer ticker.Stop()
 
@@ -218,7 +233,7 @@ func loopHealthcheck(cfg Config, ctx context.Context) {
 			for _, s := range cfg.Services {
 				checkErr := verificarServico(s.HealthURL)
 				anterior := lerEstado().Services[s.Name]
-				resultado := processarCheck(anterior, checkErr, cooldown)
+				resultado := processarCheck(anterior, checkErr, cooldown, falhasParaAlerta)
 
 				atualizarEstado(func(e *Estado) {
 					e.Services[s.Name] = resultado.novoEstado

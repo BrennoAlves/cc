@@ -110,7 +110,7 @@ func msgEgressAviso(usadoMB float64, limiteMB int, nivel int) string {
 	if nivel == 90 {
 		return fmt.Sprintf("O tráfego de saída do servidor está em %.0f%% do limite — só %.0f MB sobrando esse mês. Cuidado pra não sair do free tier.", pct, sobra)
 	}
-	return fmt.Sprintf("O tráfego de saída do servidor está em %.0f%% do limite mensal — %.0f MB de %.0f MB usados. Só pra você ficar de olho.", usadoMB, float64(limiteMB), pct)
+	return fmt.Sprintf("O tráfego de saída do servidor está em %.0f%% do limite mensal — %.0f MB de %.0f MB usados. Só pra você ficar de olho.", pct, usadoMB, float64(limiteMB))
 }
 
 func loopGCP(cfg Config, ctx context.Context) {

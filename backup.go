@@ -8,7 +8,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -36,6 +39,23 @@ func copiarArquivo(origem, destino string) error {
 
 	_, err = io.Copy(dst, src)
 	return err
+}
+
+// extrairBanco tira um snapshot consistente do SQLite via VACUUM INTO, que
+// respeita locks e WAL — copiar o arquivo cru durante uma escrita pode gerar
+// backup corrompido. Sem o binário sqlite3 no PATH, cai pra cópia simples.
+func extrairBanco(origem, destino string) error {
+	sqlite3, err := exec.LookPath("sqlite3")
+	if err != nil {
+		log.Printf("backup: sqlite3 não encontrado, copiando arquivo direto (snapshot pode ser inconsistente)")
+		return copiarArquivo(origem, destino)
+	}
+
+	cmd := exec.Command(sqlite3, origem, fmt.Sprintf("VACUUM INTO '%s'", destino))
+	if saida, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("sqlite3 VACUUM INTO: %v (%s)", err, strings.TrimSpace(string(saida)))
+	}
+	return nil
 }
 
 func comprimirArquivo(origem, destino string) error {
@@ -91,12 +111,15 @@ func uploadGCS(caminho, bucket, nome, token string) error {
 }
 
 func listarBackupsGCS(bucket, prefixo, token string) ([]string, error) {
-	url := fmt.Sprintf(
+	endpoint := fmt.Sprintf(
 		"https://storage.googleapis.com/storage/v1/b/%s/o?prefix=backups/%s",
 		bucket, prefixo,
 	)
 
-	req, _ := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequest("GET", endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := httpClient.Do(req)
@@ -105,12 +128,18 @@ func listarBackupsGCS(bucket, prefixo, token string) ([]string, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GCS retornou status %d", resp.StatusCode)
+	}
+
 	var resultado struct {
 		Items []struct {
 			Name string `json:"name"`
 		} `json:"items"`
 	}
-	json.NewDecoder(resp.Body).Decode(&resultado)
+	if err := json.NewDecoder(resp.Body).Decode(&resultado); err != nil {
+		return nil, fmt.Errorf("decodificando listagem: %w", err)
+	}
 
 	nomes := make([]string, len(resultado.Items))
 	for i, item := range resultado.Items {
@@ -120,10 +149,13 @@ func listarBackupsGCS(bucket, prefixo, token string) ([]string, error) {
 }
 
 func deletarObjetoGCS(bucket, nome, token string) error {
-	url := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o/%s",
-		bucket, strings.ReplaceAll(nome, "/", "%2F"))
+	endpoint := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o/%s",
+		bucket, url.PathEscape(nome))
 
-	req, _ := http.NewRequest("DELETE", url, nil)
+	req, err := http.NewRequest("DELETE", endpoint, nil)
+	if err != nil {
+		return err
+	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := httpClient.Do(req)
@@ -131,18 +163,16 @@ func deletarObjetoGCS(bucket, nome, token string) error {
 		return err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("GCS retornou status %d", resp.StatusCode)
+	}
 	return nil
 }
 
-func rotacionarBackups(bucket, prefixo, token string, retencaoDias int) {
-	objetos, err := listarBackupsGCS(bucket, prefixo, token)
-	if err != nil {
-		log.Printf("backup: erro ao listar objetos para rotação: %v", err)
-		return
-	}
-
-	corte := time.Now().UTC().AddDate(0, 0, -retencaoDias)
-
+// pura: decide quais objetos passaram da retenção a partir do nome
+func backupsExpirados(objetos []string, corte time.Time) []string {
+	var expirados []string
 	for _, obj := range objetos {
 		partes := strings.Split(obj, "_")
 		if len(partes) < 2 {
@@ -154,7 +184,24 @@ func rotacionarBackups(bucket, prefixo, token string, retencaoDias int) {
 			continue
 		}
 		if t.Before(corte) {
-			deletarObjetoGCS(bucket, obj, token)
+			expirados = append(expirados, obj)
+		}
+	}
+	return expirados
+}
+
+func rotacionarBackups(bucket, prefixo, token string, retencaoDias int) {
+	objetos, err := listarBackupsGCS(bucket, prefixo, token)
+	if err != nil {
+		log.Printf("backup: erro ao listar objetos para rotação: %v", err)
+		return
+	}
+
+	corte := time.Now().UTC().AddDate(0, 0, -retencaoDias)
+
+	for _, obj := range backupsExpirados(objetos, corte) {
+		if err := deletarObjetoGCS(bucket, obj, token); err != nil {
+			log.Printf("backup: erro ao deletar %s: %v", obj, err)
 		}
 	}
 }
@@ -163,14 +210,18 @@ func realizarBackup(b ConfigBackup, token string) error {
 	timestamp := time.Now().UTC().Format("20060102_150405")
 	nomeArquivo := fmt.Sprintf("%s_%s.db.gz", b.Nome, timestamp)
 
-	tmpDB := fmt.Sprintf("/tmp/%s_%s.db", b.Nome, timestamp)
-	tmpGZ := fmt.Sprintf("/tmp/%s", nomeArquivo)
+	//diretório privado evita colisão e nome previsível em /tmp compartilhado
+	tmpDir, err := os.MkdirTemp("", "cc-backup-")
+	if err != nil {
+		return fmt.Errorf("criando diretório temporário: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
 
-	defer os.Remove(tmpDB)
-	defer os.Remove(tmpGZ)
+	tmpDB := filepath.Join(tmpDir, "snapshot.db")
+	tmpGZ := filepath.Join(tmpDir, nomeArquivo)
 
-	if err := copiarArquivo(b.Caminho, tmpDB); err != nil {
-		return fmt.Errorf("copiando banco: %w", err)
+	if err := extrairBanco(b.Caminho, tmpDB); err != nil {
+		return fmt.Errorf("extraindo banco: %w", err)
 	}
 
 	if err := comprimirArquivo(tmpDB, tmpGZ); err != nil {

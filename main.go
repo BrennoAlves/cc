@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -43,8 +44,7 @@ type Config struct {
 		CheckInterval    int `yaml:"check_interval"`
 		APIPort          int `yaml:"api_port"`
 		AlertCooldownMin int `yaml:"alert_cooldown_min"`
-		LimiteDiscoPct   int `yaml:"limite_disco_pct"`
-		LimiteMemoriaPct int `yaml:"limite_memoria_pct"`
+		FalhasParaAlerta int `yaml:"falhas_para_alerta"`
 		QuietHours       struct {
 			Enabled  bool   `yaml:"enabled"`
 			Inicio   int    `yaml:"inicio"`
@@ -90,8 +90,8 @@ func carregarConfig(caminho string) (Config, error) {
 	return cfg, nil
 }
 
-//acha o canal certo pra entregar a msg
-//prioridade: override > canal do servico > chat_id direto > padrao global
+// acha o canal certo pra entregar a msg
+// prioridade: override > canal do servico > chat_id direto > padrao global
 func resolverCanal(projeto, override string, cfg Config) (Canal, error) {
 	buscarCanal := func(nome string) (Canal, bool) {
 		for _, c := range cfg.Canais {
@@ -129,14 +129,14 @@ func canalPadrao(cfg Config) Canal {
 	return Canal{Tipo: "telegram", ChatID: cfg.Telegram.ChatID}
 }
 
-//manda a msg pelo canal
-//adicionar novos tipos aqui: discord, email, etc
+// manda a msg pelo canal
+// adicionar novos tipos aqui: discord, email, etc
 func entregar(canal Canal, cfg Config, msg string) error {
 	return entregarComFoto(canal, cfg, msg, "")
 }
 
-//igual ao entregar, mas anexa uma foto quando fotoURL nao for vazia
-//o texto vai sempre primeiro pra garantir entrega mesmo se a foto falhar
+// igual ao entregar, mas anexa uma foto quando fotoURL nao for vazia
+// o texto vai sempre primeiro pra garantir entrega mesmo se a foto falhar
 func entregarComFoto(canal Canal, cfg Config, msg, fotoURL string) error {
 	switch canal.Tipo {
 	case "telegram", "":
@@ -152,10 +152,10 @@ func entregarComFoto(canal Canal, cfg Config, msg, fotoURL string) error {
 	}
 }
 
-//tenta como foto (preview bonito) e cai pra documento se a imagem for grande
-//demais pro sendPhoto (limite de 10000px de largura+altura por URL).
-//o sendPhoto que falha envenena o cache do telegram pra aquela URL, entao o
-//fallback usa a URL "furada" pra forcar uma nova busca.
+// tenta como foto (preview bonito) e cai pra documento se a imagem for grande
+// demais pro sendPhoto (limite de 10000px de largura+altura por URL).
+// o sendPhoto que falha envenena o cache do telegram pra aquela URL, entao o
+// fallback usa a URL "furada" pra forcar uma nova busca.
 func anexarFoto(token, chatID, fotoURL string) {
 	if err := enviarFotoTelegram(token, chatID, fotoURL); err == nil {
 		return
@@ -180,7 +180,7 @@ func enviarTelegram(token, chatID, texto string) error {
 	})
 }
 
-//manda foto via URL publica (preview inline)
+// manda foto via URL publica (preview inline)
 func enviarFotoTelegram(token, chatID, fotoURL string) error {
 	return chamarTelegram(token, "sendPhoto", map[string]string{
 		"chat_id": chatID,
@@ -188,7 +188,7 @@ func enviarFotoTelegram(token, chatID, fotoURL string) error {
 	})
 }
 
-//manda como documento — sem limite de dimensao, preserva resolucao original
+// manda como documento — sem limite de dimensao, preserva resolucao original
 func enviarDocumentoTelegram(token, chatID, fotoURL string) error {
 	return chamarTelegram(token, "sendDocument", map[string]string{
 		"chat_id":  chatID,
@@ -196,6 +196,9 @@ func enviarDocumentoTelegram(token, chatID, fotoURL string) error {
 	})
 }
 
+// tenta até 3 vezes com backoff: uma falha transitória de rede não pode
+// custar um alerta crítico. Erros 4xx (exceto 429) não são retentados —
+// repetir um payload inválido não muda o resultado.
 func chamarTelegram(token, metodo string, payload map[string]string) error {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", token, metodo)
 
@@ -204,17 +207,29 @@ func chamarTelegram(token, metodo string, payload map[string]string) error {
 		return fmt.Errorf("serializando payload: %w", err)
 	}
 
-	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(corpo))
-	if err != nil {
-		return fmt.Errorf("chamando API: %w", err)
-	}
-	defer resp.Body.Close()
+	var ultimoErr error
+	for tentativa := 0; tentativa < 3; tentativa++ {
+		if tentativa > 0 {
+			time.Sleep(time.Duration(tentativa) * 2 * time.Second)
+		}
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("telegram retornou status %d", resp.StatusCode)
+		resp, err := httpClient.Post(url, "application/json", bytes.NewReader(corpo))
+		if err != nil {
+			ultimoErr = fmt.Errorf("chamando API: %w", err)
+			continue
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusOK {
+			return nil
+		}
+		ultimoErr = fmt.Errorf("telegram retornou status %d", resp.StatusCode)
+		if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != http.StatusTooManyRequests {
+			return ultimoErr
+		}
 	}
 
-	return nil
+	return ultimoErr
 }
 
 func responderJSON(w http.ResponseWriter, status int, v any) {
@@ -238,13 +253,13 @@ func handlerNotify(cfg Config) http.HandlerFunc {
 		}
 
 		token := extrairBearer(r.Header.Get("Authorization"))
-		if cfg.NotifyToken == "" || token != cfg.NotifyToken {
+		if cfg.NotifyToken == "" || subtle.ConstantTimeCompare([]byte(token), []byte(cfg.NotifyToken)) != 1 {
 			responderJSON(w, http.StatusUnauthorized, Resposta{OK: false, Erro: "não autorizado"})
 			return
 		}
 
 		var payload NotifyPayload
-		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&payload); err != nil {
 			responderJSON(w, http.StatusBadRequest, Resposta{OK: false, Erro: "body inválido"})
 			return
 		}

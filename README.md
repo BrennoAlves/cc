@@ -133,8 +133,7 @@ server:
   check_interval: 60       # segundos entre healthchecks
   api_port: 8765           # porta da API /notify (somente localhost)
   alert_cooldown_min: 30   # minutos entre alertas repetidos de serviço fora
-  limite_disco_pct: 85     # percentual de disco que dispara alerta
-  limite_memoria_pct: 90   # percentual de memória que dispara alerta
+  falhas_para_alerta: 2    # falhas consecutivas antes do primeiro alerta (evita blip de rede)
   quiet_hours:
     enabled: true
     inicio: 22             # hora de início do silêncio (22 = 22h)
@@ -168,11 +167,17 @@ Ao iniciar, cc envia uma mensagem no Telegram confirmando os serviços monitorad
 # Copiar o binário
 sudo cp cc-linux /usr/local/bin/cc
 
+# Criar o usuário de sistema dedicado (sem login, sem home)
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin cc
+
 # Criar diretórios
 sudo mkdir -p /etc/cc /var/lib/cc
+sudo chown cc:cc /var/lib/cc
 
-# Copiar o config
+# Copiar o config (legível só pelo serviço — contém credenciais)
 sudo cp config.yaml /etc/cc/config.yaml
+sudo chown cc:cc /etc/cc/config.yaml
+sudo chmod 600 /etc/cc/config.yaml
 
 # Instalar o serviço
 sudo cp deploy/cc.service /etc/systemd/system/
@@ -182,6 +187,8 @@ sudo systemctl enable --now cc
 # Ver logs
 journalctl -u cc -f
 ```
+
+O unit roda com sandbox do systemd (`ProtectSystem=strict`, `PrivateTmp`, etc.) e só escreve em `/var/lib/cc`. Se usar a seção `backups:`, adicione o diretório de cada banco em `ReadWritePaths=` no `cc.service` — em modo WAL o SQLite precisa de escrita no diretório para ler com consistência.
 
 ---
 

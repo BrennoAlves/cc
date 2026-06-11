@@ -4,6 +4,7 @@ config.yaml
 # Binários compilados
 cc
 cc-linux
+cc_linux
 cc-darwin
 cc-windows.exe
 
@@ -23,3 +24,7 @@ ROADMAP.md
 .idea/
 .vscode/
 *.swp
+
+
+.claude/
+.serena/

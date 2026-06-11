@@ -1,4 +1,6 @@
 # Copiar para /etc/systemd/system/cc.service
+# Criar o usuário dedicado: sudo useradd --system --no-create-home --shell /usr/sbin/nologin cc
+# Dar posse do diretório de estado: sudo chown cc:cc /var/lib/cc
 # Habilitar: sudo systemctl enable --now cc
 
 [Unit]
@@ -8,7 +10,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=desk
+User=cc
+Group=cc
 WorkingDirectory=/var/lib/cc
 ExecStart=/usr/local/bin/cc -config /etc/cc/config.yaml
 Restart=always
@@ -16,6 +19,17 @@ RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=cc
+
+# Sandbox: o processo só precisa escrever em /var/lib/cc e nos
+# arquivos dos bancos configurados em backups (adicionar em ReadWritePaths)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/cc
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target

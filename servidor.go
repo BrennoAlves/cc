@@ -143,7 +143,7 @@ func loopServidor(cfg Config, ctx context.Context) {
 			} else {
 				for _, d := range discos {
 					nivel := nivelAlerta(d.Percent)
-					nivelAnterior := lerEstado().Servidor.NivelAlertaDisco
+					nivelAnterior := lerEstado().Servidor.NivelAlertaDisco[d.Particao]
 					if nivel != nivelAnterior {
 						if nivel > nivelAnterior {
 							msg := msgDiscoCritico(d, nivel)
@@ -154,7 +154,10 @@ func loopServidor(cfg Config, ctx context.Context) {
 							}
 						}
 						atualizarEstado(func(e *Estado) {
-							e.Servidor.NivelAlertaDisco = nivel
+							if e.Servidor.NivelAlertaDisco == nil {
+								e.Servidor.NivelAlertaDisco = make(map[string]int)
+							}
+							e.Servidor.NivelAlertaDisco[d.Particao] = nivel
 						})
 					}
 				}
