@@ -46,3 +46,8 @@ server:
   alert_cooldown_min: 30  # minutos entre alertas repetidos de serviço fora
   limite_disco_pct: 85    # percentual de disco que dispara alerta
   limite_memoria_pct: 90  # percentual de memória que dispara alerta
+  quiet_hours:
+    enabled: true
+    inicio: 22            # hora de início do silêncio (22 = 22h)
+    fim: 8                # hora de fim do silêncio (8 = 8h)
+    timezone: "America/Sao_Paulo"  # fuso horário para calcular o horário

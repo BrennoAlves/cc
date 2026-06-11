@@ -146,7 +146,12 @@ func loopServidor(cfg Config, ctx context.Context) {
 					nivelAnterior := lerEstado().Servidor.NivelAlertaDisco
 					if nivel != nivelAnterior {
 						if nivel > nivelAnterior {
-							entregar(canalPadrao(cfg), cfg, msgDiscoCritico(d, nivel))
+							msg := msgDiscoCritico(d, nivel)
+							if nivel >= 90 {
+								entregar(canalPadrao(cfg), cfg, msg)
+							} else {
+								notificarRotina(canalPadrao(cfg), cfg, msg)
+							}
 						}
 						atualizarEstado(func(e *Estado) {
 							e.Servidor.NivelAlertaDisco = nivel
@@ -163,7 +168,12 @@ func loopServidor(cfg Config, ctx context.Context) {
 				nivelAnterior := lerEstado().Servidor.NivelAlertaMemoria
 				if nivel != nivelAnterior {
 					if nivel > nivelAnterior {
-						entregar(canalPadrao(cfg), cfg, msgMemoriaCritica(memoria, nivel))
+						msg := msgMemoriaCritica(memoria, nivel)
+						if nivel >= 90 {
+							entregar(canalPadrao(cfg), cfg, msg)
+						} else {
+							notificarRotina(canalPadrao(cfg), cfg, msg)
+						}
 					}
 					atualizarEstado(func(e *Estado) {
 						e.Servidor.NivelAlertaMemoria = nivel
@@ -179,7 +189,12 @@ func loopServidor(cfg Config, ctx context.Context) {
 				nivelAnterior := lerEstado().Servidor.NivelAlertaCPU
 				if nivel != nivelAnterior {
 					if nivel > nivelAnterior {
-						entregar(canalPadrao(cfg), cfg, msgCPUCritica(pctCPU, nivel))
+						msg := msgCPUCritica(pctCPU, nivel)
+						if nivel >= 90 {
+							entregar(canalPadrao(cfg), cfg, msg)
+						} else {
+							notificarRotina(canalPadrao(cfg), cfg, msg)
+						}
 					}
 					atualizarEstado(func(e *Estado) {
 						e.Servidor.NivelAlertaCPU = nivel

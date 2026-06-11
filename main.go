@@ -45,6 +45,12 @@ type Config struct {
 		AlertCooldownMin int `yaml:"alert_cooldown_min"`
 		LimiteDiscoPct   int `yaml:"limite_disco_pct"`
 		LimiteMemoriaPct int `yaml:"limite_memoria_pct"`
+		QuietHours       struct {
+			Enabled  bool   `yaml:"enabled"`
+			Inicio   int    `yaml:"inicio"`
+			Fim      int    `yaml:"fim"`
+			Timezone string `yaml:"timezone"`
+		} `yaml:"quiet_hours"`
 	} `yaml:"server"`
 	GCP     *ConfigGCP     `yaml:"gcp"`
 	Backups []ConfigBackup `yaml:"backups"`
@@ -62,6 +68,7 @@ type NotifyPayload struct {
 	Message   string `json:"message"`
 	Channel   string `json:"channel"`
 	ImagemURL string `json:"imagem_url"`
+	Rotina    bool   `json:"rotina"`
 }
 
 type Resposta struct {
@@ -253,9 +260,13 @@ func handlerNotify(cfg Config) http.HandlerFunc {
 			return
 		}
 
-		if err := entregarComFoto(canal, cfg, payload.Message, payload.ImagemURL); err != nil {
-			responderJSON(w, http.StatusInternalServerError, Resposta{OK: false, Erro: err.Error()})
-			return
+		if payload.Rotina {
+			notificarRotina(canal, cfg, payload.Message)
+		} else {
+			if err := entregarComFoto(canal, cfg, payload.Message, payload.ImagemURL); err != nil {
+				responderJSON(w, http.StatusInternalServerError, Resposta{OK: false, Erro: err.Error()})
+				return
+			}
 		}
 
 		responderJSON(w, http.StatusOK, Resposta{OK: true})
@@ -395,6 +406,7 @@ func main() {
 	lancar(loopServidor)
 	lancar(loopGCP)
 	lancar(loopBackup)
+	lancar(loopEntregaPendentes)
 
 	<-ctx.Done()
 

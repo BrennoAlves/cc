@@ -228,7 +228,7 @@ func loopBackup(cfg Config, ctx context.Context) {
 					entregar(canalPadrao(cfg), cfg, fmt.Sprintf("O backup do %s falhou.\n\n%v", b.Nome, err))
 				} else {
 					log.Printf("backup %s: concluído", b.Nome)
-					entregar(canalPadrao(cfg), cfg, fmt.Sprintf("Backup do %s concluído.", b.Nome))
+					notificarRotina(canalPadrao(cfg), cfg, fmt.Sprintf("Backup do %s concluído.", b.Nome))
 					atualizarEstado(func(e *Estado) {
 						e.UltimoBackup[b.Nome] = hoje
 					})

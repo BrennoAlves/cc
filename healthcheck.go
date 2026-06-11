@@ -36,11 +36,18 @@ type EstadoGCP struct {
 	NivelAlertaEgress int `json:"nivel_alerta_egress"`
 }
 
+type MsgPendente struct {
+	Canal Canal     `json:"canal"`
+	Msg   string    `json:"msg"`
+	Em    time.Time `json:"em"`
+}
+
 type Estado struct {
-	Services     map[string]EstadoServico `json:"services"`
-	Servidor     EstadoServidor           `json:"servidor"`
-	GCP          EstadoGCP                `json:"gcp"`
-	UltimoBackup map[string]string        `json:"ultimo_backup,omitempty"`
+	Services        map[string]EstadoServico `json:"services"`
+	Servidor        EstadoServidor           `json:"servidor"`
+	GCP             EstadoGCP                `json:"gcp"`
+	UltimoBackup    map[string]string        `json:"ultimo_backup,omitempty"`
+	PendentesRotina []MsgPendente            `json:"pendentes_rotina,omitempty"`
 }
 
 func nivelAlerta(pct float64) int {
